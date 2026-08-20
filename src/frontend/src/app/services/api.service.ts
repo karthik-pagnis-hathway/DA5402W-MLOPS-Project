@@ -16,7 +16,7 @@ export interface User {
   providedIn: 'root'
 })
 export class ApiService {
-  private readonly baseUrl = 'http://localhost:5000/api';
+  private readonly baseUrl = 'http://localhost:5001/api';
   
   // State management using Angular Signals
   currentUser = signal<User | null>(null);

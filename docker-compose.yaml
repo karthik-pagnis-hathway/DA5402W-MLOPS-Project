@@ -27,6 +27,12 @@ services:
     volumes:
       - ./configs/kafka/jmx_prometheus_javaagent.jar:/opt/kafka/libs/jmx_prometheus_javaagent.jar
       - ./configs/kafka/jmx-exporter-config.yml:/opt/kafka/config/jmx-exporter-config.yml
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/9092' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - spark-kafka-net
 
@@ -81,18 +87,22 @@ services:
       - spark
     command: >-
       bash -c "pip install psycopg2-binary prometheus_client -q &&
-      python -c 'from prometheus_client import start_http_server; import time; start_http_server(8000); time.sleep(1e9)' &
+      mkdir -p /tmp/mlflow-artifacts &&
+      (python -c 'from prometheus_client import start_http_server; import time; start_http_server(8000); time.sleep(1e9)' &) &&
+      exec
       mlflow server
       --host 0.0.0.0
       --port 5000
       --backend-store-uri postgresql://mlflow:mlflow@mlflow-postgres:5432/mlflowdb
-      --default-artifact-root /mlflow/artifacts"
+      --default-artifact-root /tmp/mlflow-artifacts"
     ports:
       - "5000:5000"
     volumes:
-      - ./outputs/mlruns:/mlflow/artifacts
+      - ./outputs/mlruns:/tmp/mlflow-artifacts
     networks:
       - spark-kafka-net
+    environment:
+      - MLFLOW_SERVER_ALLOWED_HOSTS=localhost:*,127.0.0.1:*,mlflow:*
    
 
   # --- Churn Notifier (cart abandonment → discount email simulation) ---
@@ -230,9 +240,11 @@ services:
         - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
         - AIRFLOW__CORE__LOAD_EXAMPLES=False
         - AIRFLOW__WEBSERVER__SECRET_KEY=mysecretkey123
+        - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
         - ./src/airflowScripts/dags:/opt/airflow/dags
         - ./src/pythonScripts:/opt/airflow/src/pythonScripts
+        - ./src/sparkScripts:/opt/airflow/src/sparkScripts
         - ./sample:/opt/airflow/sample
         - ./DB:/opt/airflow/DB
         - ./outputs:/opt/airflow/outputs
@@ -264,11 +276,16 @@ services:
         - AIRFLOW__METRICS__STATSD_HOST=localhost
         - AIRFLOW__METRICS__STATSD_PORT=9125
         - AIRFLOW__METRICS__STATSD_PREFIX=airflow
+        - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
         - ./src/airflowScripts/dags:/opt/airflow/dags
         - ./src/pythonScripts:/opt/airflow/src/pythonScripts
+        - ./src/sparkScripts:/opt/airflow/src/sparkScripts
         - ./sample:/opt/airflow/sample
         - ./DB:/opt/airflow/DB
+        - ./DB:/DB
+        - ./artifacts:/opt/airflow/artifacts
+        - ./artifacts:/artifacts
         - ./outputs:/opt/airflow/outputs
         - ./logs:/opt/airflow/logs
         - ./plugins:/opt/airflow/plugins
@@ -301,15 +318,74 @@ services:
         - AIRFLOW__METRICS__STATSD_HOST=localhost
         - AIRFLOW__METRICS__STATSD_PORT=9125
         - AIRFLOW__METRICS__STATSD_PREFIX=airflow
+        - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
         - ./src/airflowScripts/dags:/opt/airflow/dags
         - ./src/pythonScripts:/opt/airflow/src/pythonScripts
+        - ./src/sparkScripts:/opt/airflow/src/sparkScripts
         - ./sample:/opt/airflow/sample
         - ./DB:/opt/airflow/DB
+        - ./DB:/DB
+        - ./artifacts:/opt/airflow/artifacts
+        - ./artifacts:/artifacts
         - ./outputs:/opt/airflow/outputs
         - ./logs:/opt/airflow/logs
         - ./plugins:/opt/airflow/plugins
         - ./configs/airflow/statsd_mapping.yml:/etc/statsd-mapping.yml
     command: ["bash", "-c", "statsd_exporter --statsd.listen-udp=:9125 --statsd.listen-tcp=:9125 --web.listen-address=:9091 --statsd.mapping-config=/etc/statsd-mapping.yml & exec airflow scheduler"]
+    networks:
+      - spark-kafka-net
+
+  # --- Kafka Topic Initializer (one-shot) ---
+  topic-init:
+    build:
+      context: .
+      dockerfile: docker/kafka-init/Dockerfile
+    container_name: topic-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    networks:
+      - spark-kafka-net
+
+  # --- Kafka Event Producer (synthetic user events, runs forever) ---
+  event-producer:
+    build:
+      context: .
+      dockerfile: docker/kafka-producer/Dockerfile
+    container_name: event-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      - KAFKA_BROKER=kafka:9092
+    volumes:
+      - ./outputs:/opt/airflow/outputs
+    networks:
+      - spark-kafka-net
+
+  # --- Spark Streaming Consumer (Kafka → EventsDB parquet) ---
+  spark-consumer:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    container_name: spark-consumer
+    user: root
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_started
+    environment:
+      - PYSPARK_PYTHON=python3
+    command: bash -c "/opt/spark/bin/spark-submit --master local[2] --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 /opt/project/src/sparkScripts/spark_streaming_consumer.py --brokers kafka:9092 --topics user-events,recommendation-actions,notification-events --raw-events-path /DB/topic_dumps --dump-raw-topics --dump-path /DB/topic_dumps --checkpoint-dir /opt/spark/work-dir/checkpoints"
+    volumes:
+      - ./src:/opt/project/src
+      - ./DB:/DB
+      - ./lookupData:/lookupData
     networks:
       - spark-kafka-net

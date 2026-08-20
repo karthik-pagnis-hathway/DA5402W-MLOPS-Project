@@ -100,8 +100,11 @@ def extract_transaction_features(csv_file_path: str = "events.csv", output_csv_p
     return features_df
 
 if __name__ == "__main__":
-    events_path=os.path.join(BASE_DIR, "../..", "sample", "events.csv")
-    extract_path=os.path.join(BASE_DIR, "../..", "DB", "extracted_features.csv")
-    features = extract_transaction_features(events_path, extract_path)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--events-path", default=os.path.join(BASE_DIR, "../..", "sample", "events.csv"))
+    parser.add_argument("--output-path", default=os.path.join(BASE_DIR, "../..", "DB", "extracted_features.csv"))
+    args = parser.parse_args()
+    features = extract_transaction_features(args.events_path, args.output_path)
     print("\nExtracted Features Preview (First 5 Rows):")
     print(features[['user_id', 'session_id', 'event_type', 'cart_product_id_list']].head())

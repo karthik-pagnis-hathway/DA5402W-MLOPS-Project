@@ -45,7 +45,17 @@ Desktop.ini
 
 # data paths, DB
 DB/seed/amazon_products.csv
-DB/*
+# DVC-tracked large data dirs (pointer .dvc files are git-tracked)
+DB/topic_dumps/
+DB/analytics/
+DB/consumed_events/
+DB/metrics/
+DB/events_from_kafka.csv
+DB/extracted_features.csv
+DB/user_value_features.csv
+
+# model artifacts tracked by DVC
+artifacts/
 
 # Spark
 spark-warehouse/
@@ -69,3 +79,4 @@ models/
 ecomm_data/
 mlflow_data/
 postgres_data/
+/artifacts

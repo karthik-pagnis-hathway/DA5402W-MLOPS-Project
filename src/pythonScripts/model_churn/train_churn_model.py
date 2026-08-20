@@ -130,7 +130,12 @@ def train(
             mlflow.log_metric(f"importance_{feat}", round(float(imp), 4))
 
         print(f"\nAccuracy: {acc:.4f} | F1 Macro: {f1_macro:.4f} | CV F1: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-        print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=['Low','Medium','High'])}")
+
+        unique_test_labels = sorted(pd.unique(y_test))
+        if len(unique_test_labels) == 1:
+            print(f"\nClassification Report (single-class validation split):\n{classification_report(y_test, y_pred, labels=unique_test_labels, target_names=[LABEL_MAP[i] for i in unique_test_labels])}")
+        else:
+            print(f"\nClassification Report:\n{classification_report(y_test, y_pred, labels=[0, 1, 2], target_names=['Low','Medium','High'])}")
 
         # Save and log model artifact
         os.makedirs(os.path.dirname(model_output_path), exist_ok=True)

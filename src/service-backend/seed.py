@@ -41,6 +41,7 @@ def seed(conn: psycopg2.extensions.connection) -> None:
             cur.copy_expert(
                 "COPY categories (id, category_name) FROM STDIN WITH (FORMAT CSV, HEADER)", f
             )
+        cur.execute("SELECT setval(pg_get_serial_sequence('categories', 'id'), COALESCE((SELECT MAX(id) FROM categories), 0) + 1, false)")
 
         products_csv = os.path.join(SEED_DIR, "amazon_products.csv")
         if not os.path.exists(products_csv):
@@ -70,6 +71,7 @@ def seed(conn: psycopg2.extensions.connection) -> None:
                    FROM STDIN WITH (FORMAT CSV, HEADER)""",
                 buf,
             )
+        cur.execute("SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)")
 
         print("Seeding events...")
         with open(os.path.join(SEED_DIR, "events.csv"), "r", encoding="utf-8") as f:
@@ -79,6 +81,7 @@ def seed(conn: psycopg2.extensions.connection) -> None:
                    FROM STDIN WITH (FORMAT CSV, HEADER)""",
                 f,
             )
+        cur.execute("SELECT setval(pg_get_serial_sequence('events', 'id'), COALESCE((SELECT MAX(id) FROM events), 0) + 1, false)")
 
     conn.commit()
     print("Seed complete.")

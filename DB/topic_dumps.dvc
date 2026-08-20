@@ -1,0 +1,6 @@
+outs:
+- md5: 4babc92dece04763bab29efbaf510eae.dir
+  size: 0
+  nfiles: 1
+  hash: md5
+  path: topic_dumps

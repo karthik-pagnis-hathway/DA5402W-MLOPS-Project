@@ -39,10 +39,10 @@ find . -type d -name "__pycache__" -exec rm -rf {} +
 find . -type f -name "*.pyc" -delete
 
 3. Down the container
-docker compose -f docker_compose.yaml down
+docker compose -f docker-compose.yaml down
 
 (OR, stop and delete everything related to the compose project)
-docker compose -f docker_compose.yaml down --rmi all -v --remove-orphans
+docker compose -f docker-compose.yaml down --rmi all -v --remove-orphans
 
 4. Full cleanup, Remove unused Docker resources, only if required !!...THIS WILL REMOVE ALL THE CONTAINERS PULLED...!!
 docker system prune -a --volumes -f
@@ -52,32 +52,44 @@ docker system prune -a --volumes -f
 # Fresh start using docker
 
 6. Build fresh images, installations happen here
-docker compose -f docker_compose.yaml build --no-cache
+docker compose -f docker-compose.yaml build --no-cache
 
 7. Fire up the services one by one, and check logs if needed
 
-docker compose -f docker_compose.yaml up -d postgres
-docker compose -f docker_compose.yaml logs postgres
+docker compose -f docker-compose.yaml up -d postgres
+docker compose -f docker-compose.yaml logs postgres
 
 (Create kafka topics)
-docker compose -f docker_compose.yaml up -d topic-init
-docker compose -f docker_compose.yaml logs topic-init
+docker compose -f docker-compose.yaml up -d topic-init
+docker compose -f docker-compose.yaml logs topic-init
 
-docker compose -f docker_compose.yaml up airflow-init
-docker compose -f docker_compose.yaml logs airflow-init
+docker compose -f docker-compose.yaml up airflow-init
+docker compose -f docker-compose.yaml logs airflow-init
 
-(Start streaming script)
-docker compose -f docker_compose.yaml up -d spark
-docker compose -f docker_compose.yaml logs -f spark
+(Start streaming consumer and event producer)
+docker compose -f docker-compose.yaml up -d spark spark-consumer event-producer
+docker compose -f docker-compose.yaml logs -f spark-consumer
 
 (Wait for some time, Check if all the containers are running)
-docker compose -f ./docker_compose.yaml ps
+docker compose -f docker-compose.yaml ps
 
 8. Fireup airflow webserver and verify UI at localhost:8080 and check logs
-docker compose -f docker_compose.yaml up -d airflow-webserver airflow-scheduler
-docker compose -f docker_compose.yaml logs airflow-scheduler
+docker compose -f docker-compose.yaml up -d airflow-webserver airflow-scheduler
+docker compose -f docker-compose.yaml logs airflow-scheduler
 
-9. Fire up the producer, use --kafka-broker as kafka:9094 if running from inside docker
+9. Fire up the ecomm backend + frontend
+docker compose -f docker-compose.yaml up -d ecomm-postgres ecomm-backend frontend apriori-api churn-notifier
+
+# Access points:
+#   Angular UI:        http://localhost:4200
+#   Flask backend:     http://localhost:5001/api/health
+#   MLflow UI:         http://localhost:5000
+#   Airflow UI:        http://localhost:8080  (admin/admin)
+#   Apriori API:       http://localhost:5002/health
+#   pgweb (DB UI):     http://localhost:8081
+#   Kafka external:    localhost:9094
+
+10. (Optional) Run the producer from host machine:
 python ./src/kafkaScripts/launch_producer.py --n-users 1000 --n-products 200 --batch-size 500 --interval-seconds 5 --kafka-broker localhost:9094 --out-dir ./outputs/kafkaOutput --seed 42 --run-forever
 
 ------------------

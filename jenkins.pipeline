@@ -1,0 +1,49 @@
+pipeline {
+    agent any
+
+    environment {
+        // Sets the working directory to your WSL path
+        REPO_PATH = '/mnt/d/Projects/DA5402W-MLOPS-Project'
+    }
+
+    stages {
+        stage('Pull Latest Code') {
+            steps {
+                dir("${env.REPO_PATH}") {
+                    echo 'Adding safe directory exception and pulling latest changes...'
+                    sh 'git config --global --add safe.directory /mnt/d/Projects/DA5402W-MLOPS-Project'
+                    sh 'git pull origin main'
+                }
+            }
+        }
+
+        stage('Docker Compose Build') {
+            steps {
+                dir("${env.REPO_PATH}") {
+                    echo 'Building Docker Compose images...'
+                    // Builds services without starting them
+                    sh '"/mnt/c/Program Files/Docker/Docker/resources/bin/docker-compose.exe" build'
+                }
+            }
+        }
+
+        stage('Docker Compose Up') {
+            steps {
+                dir("${env.REPO_PATH}") {
+                    echo 'Build successful. Starting services in background...'
+                    // Starts all services in detached mode (-d)
+                    sh '"/mnt/c/Program Files/Docker/Docker/resources/bin/docker-compose.exe" up -d'
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'Pipeline failed! Docker Compose Up step was skipped to prevent broken deployments.'
+        }
+        success {
+            echo 'Deployment completed successfully!'
+        }
+    }
+}

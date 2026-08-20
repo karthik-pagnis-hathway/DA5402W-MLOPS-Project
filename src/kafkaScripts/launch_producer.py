@@ -55,7 +55,7 @@ def producer_worker(args: argparse.Namespace) -> None:
     Kafka-streaming function in batches, forever or up to --max-batches."""
     rng = eventProducer.np.random.default_rng(args.seed)
 
-    events_path = os.path.join(args.out_dir, "events.csv")
+    events_path = os.path.join(args.out_dir, args.file_name)
     os.makedirs(args.out_dir, exist_ok=True)
 
     batch_num = 0
@@ -102,6 +102,8 @@ def parse_args():
                          help="Explicit flag for running with no batch limit (equivalent to omitting --max-batches)")
     parser.add_argument("--kafka-broker", type=str, default="localhost:9092")
     parser.add_argument("--out-dir", type=str, default=".")
+    parser.add_argument("--file-name", type=str, default="events_from_kafka.csv",
+                        help="CSV filename to write inside --out-dir. Compatibility copies are also created as events.csv.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

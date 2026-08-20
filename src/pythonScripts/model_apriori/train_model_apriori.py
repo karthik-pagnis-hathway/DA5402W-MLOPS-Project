@@ -34,10 +34,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def resolve_repo_root(start_file: Path) -> Path:
     current = start_file.resolve()
-    for parent in [current, *current.parents]:
-        if (parent / "artifacts").exists():
+    candidates = [
+        Path("/opt/airflow"),
+        Path("/artifacts"),
+        Path("/workspace"),
+        Path("/app"),
+        *[current, *current.parents],
+    ]
+    for parent in candidates:
+        if (parent / "artifacts").exists() or (parent / "DB").exists() and (parent / "src").exists():
             return parent
-    return current.parents[-1]
+    if Path("/opt/airflow").exists():
+        return Path("/opt/airflow")
+    return Path.cwd().resolve()
 
 def run_apriori_and_save(
     features_csv: str = "extracted_features.csv", 
@@ -59,6 +68,8 @@ def run_apriori_and_save(
         features_csv = repo_root / "DB" / "extracted_features.csv"
     if model_pickle_file is None:
         model_pickle_file = repo_root / "artifacts" / "apriori_model.pkl"
+    model_pickle_file = Path(model_pickle_file)
+    model_pickle_file.parent.mkdir(parents=True, exist_ok=True)
 
     if mlflow_tracking_uri is None:
         mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -66,6 +77,8 @@ def run_apriori_and_save(
     mlflow.set_experiment("apriori_recommendation")
     if rules_output_csv is None:
         rules_output_csv = repo_root / "artifacts" / "apriori_rules.csv"
+    rules_output_csv = Path(rules_output_csv)
+    rules_output_csv.parent.mkdir(parents=True, exist_ok=True)
     if not os.path.exists(features_csv):
         print(f"Error: '{features_csv}' not found in current directory ({os.getcwd()}).")
         print("Please place 'extracted_features.csv' in the same folder as this script.")
@@ -157,8 +170,16 @@ def run_apriori_and_save(
             }
         }
         
+        # Save a version-safe payload: encode pandas objects to Python-native types
+        # before pickling so the file remains readable across pandas versions.
+        safe_model_payload = {
+            'frequent_itemsets': frequent_itemsets,
+            'rules': rules_export,
+            'parameters': model_payload['parameters'],
+            'encoder_columns': list(te.columns_),
+        }
         with open(model_pickle_file, 'wb') as f:
-            pickle.dump(model_payload, f)
+            pickle.dump(safe_model_payload, f)
 
         print(f"Model serialized & saved as pickle file: '{model_pickle_file}'")
         print("=== Top 10 Association Rules by Lift ===")
@@ -222,6 +243,11 @@ def log_apriori_artifacts(
     if rules_path is None:
         rules_path = repo_root / "artifacts" / "apriori_rules.csv"
 
+    model_path = Path(model_path)
+    rules_path = Path(rules_path)
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    rules_path.parent.mkdir(parents=True, exist_ok=True)
+
     if not model_path.exists():
         raise FileNotFoundError(f"Apriori model not found at: {model_path}")
 
@@ -230,8 +256,18 @@ def log_apriori_artifacts(
 
     mlflow.set_tracking_uri(tracking_uri)
 
-    with model_path.open("rb") as fh:
-        model_payload = pickle.load(fh)
+    try:
+        with model_path.open("rb") as fh:
+            model_payload = pickle.load(fh)
+    except Exception as exc:
+        try:
+            model_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise TypeError(
+            f"Could not load Apriori artifact {model_path}. The pickle appears stale or incompatible with this pandas version. "
+            f"The file was removed so it can be rebuilt. Retrain the model and rerun this task: {exc}"
+        ) from exc
 
     params = model_payload.get("parameters", {})
     rules = model_payload.get("rules")
@@ -272,17 +308,22 @@ if __name__ == "__main__":
     parser.add_argument("--input-path", type=str, default=None, help="Path to extracted_features.csv")
     parser.add_argument("--tracking-uri", type=str, default=None, help="MLflow tracking server URI")
     args = parser.parse_args()
-    
-    log_apriori_artifacts(
-        model_path=Path(args.model_path) if args.model_path else None,
-        rules_path=Path(args.rules_path) if args.rules_path else None,
-        tracking_uri=args.tracking_uri,
-    )
-    
+
+    model_path = Path(args.model_path) if args.model_path else None
+    rules_path = Path(args.rules_path) if args.rules_path else None
+    input_path = Path(args.input_path) if args.input_path else None
+
     run_apriori_and_save(
-        features_csv=Path(args.input_path) if args.input_path else None,
-        min_support=0.000000000000000001,         
-        min_confidence=0.1,      # 10% minimum confidence
-        rules_output_csv=Path(args.rules_path) if args.rules_path else None,
-        model_pickle_file=Path(args.model_path) if args.model_path else None
+        features_csv=input_path if input_path else None,
+        min_support=0.000000000000000001,
+        min_confidence=0.1,
+        rules_output_csv=rules_path,
+        model_pickle_file=model_path,
+        mlflow_tracking_uri=args.tracking_uri,
+    )
+
+    log_apriori_artifacts(
+        model_path=model_path,
+        rules_path=rules_path,
+        tracking_uri=args.tracking_uri,
     )

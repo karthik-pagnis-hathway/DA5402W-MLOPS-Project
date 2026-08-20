@@ -4,6 +4,7 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Copy dependency definitions and install
+
 COPY src/frontend/package*.json /app/
 RUN npm ci
 

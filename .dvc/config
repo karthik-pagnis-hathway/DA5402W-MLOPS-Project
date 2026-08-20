@@ -1,0 +1,5 @@
+[core]
+    remote = studentserver
+['remote "studentserver"']
+    url = ssh://da25m613@164.52.205.84/home/da25m613/dvc-storage
+    port = 22

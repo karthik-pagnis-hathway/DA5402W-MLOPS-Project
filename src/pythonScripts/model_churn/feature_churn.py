@@ -84,14 +84,21 @@ def compute_user_features(events_path: str = None, output_path: str = None) -> p
     agg["recommendation_ctr"] = np.where(
         agg["rec_shown"] > 0, agg["rec_clicked"] / agg["rec_shown"], 0.0
     )
-    agg["days_since_last_tx"] = (
-        snapshot_time - df[df["event_type"] == "transaction"]
-        .groupby("user_id")["timestamp"].max()
-        .reindex(agg["user_id"])
-        .values
+
+    last_tx_by_user = (
+        df[df["event_type"] == "transaction"]
+        .groupby("user_id")["timestamp"]
+        .max()
+        .rename("last_transaction_time")
     )
+    last_tx_by_user = pd.to_datetime(last_tx_by_user).reindex(agg["user_id"])  # align by user_id
+
     agg["days_since_last_tx"] = (
-        pd.to_timedelta(agg["days_since_last_tx"]).dt.days.fillna(999).clip(upper=999)
+        (snapshot_time - last_tx_by_user)
+        .dt.days
+        .fillna(999)
+        .clip(upper=999)
+        .astype(int)
     )
     agg["active_days"] = (
         (agg["last_event_time"] - agg["first_event_time"]).dt.days.fillna(0) + 1
@@ -112,9 +119,12 @@ def compute_user_features(events_path: str = None, output_path: str = None) -> p
         - np.log1p(agg["days_since_last_tx"]) * 0.3
     )
 
-    p33, p66 = score.quantile([0.33, 0.66])
-    agg["value_label"] = pd.cut(
-        score, bins=[-np.inf, p33, p66, np.inf], labels=[0, 1, 2]
+    score = pd.to_numeric(score, errors="coerce").fillna(0.0)
+    score_rank = score.rank(pct=True, method="average").fillna(0.5)
+    agg["value_label"] = np.select(
+        [score_rank <= 0.33, score_rank <= 0.66],
+        [0, 1],
+        default=2,
     ).astype(int)
     agg["value_score"] = score
 
@@ -134,4 +144,9 @@ def compute_user_features(events_path: str = None, output_path: str = None) -> p
 
 
 if __name__ == "__main__":
-    compute_user_features()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--events-path", default=None)
+    parser.add_argument("--output-path", default=None)
+    args = parser.parse_args()
+    compute_user_features(events_path=args.events_path, output_path=args.output_path)

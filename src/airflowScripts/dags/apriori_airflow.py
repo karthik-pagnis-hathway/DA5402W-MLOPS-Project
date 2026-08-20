@@ -3,7 +3,6 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime
-import os
 
 default_args = {
     "owner": "samuel",
@@ -15,17 +14,39 @@ default_args = {
 with DAG(
     dag_id="mlops_pipeline",
     default_args=default_args,
-    description="Recommendation (Apriori) + Customer Value Scoring pipeline",
-    schedule_interval="*/5 * * * *",
+    description="Recommendation (Apriori) pipeline",
+    schedule_interval="0 2 * * *",
     catchup=False,
 ) as dag:
+
+    # -----------------------------------------------------------------------
+    # Step 0: Spark batch ETL — parquet topic_dumps → events CSV
+    # -----------------------------------------------------------------------
+    spark_etl = BashOperator(
+        task_id="spark_etl",
+        bash_command=(
+            "cd /opt/airflow/src/sparkScripts && "
+            "python spark_etl.py "
+            "--input-path /opt/airflow/DB/topic_dumps/user_events "
+            "--output-csv /opt/airflow/DB/events_from_kafka.csv"
+        ),
+    )
+
+    dvc_push = BashOperator(
+        task_id="dvc_push",
+        bash_command="cd /opt/airflow && dvc push DB/topic_dumps.dvc 2>&1 || true",
+    )
 
     # -----------------------------------------------------------------------
     # Branch A: Recommendation (Apriori)
     # -----------------------------------------------------------------------
     feature_task = BashOperator(
         task_id="feature_engineering",
-        bash_command="python /opt/airflow/src/pythonScripts/feature.py",
+        bash_command=(
+            "python /opt/airflow/src/pythonScripts/feature.py "
+            "--events-path /opt/airflow/DB/events_from_kafka.csv "
+            "--output-path /opt/airflow/DB/extracted_features.csv"
+        ),
     )
 
     train_apriori = BashOperator(
@@ -33,27 +54,7 @@ with DAG(
         bash_command="/usr/local/bin/python /opt/airflow/src/pythonScripts/model_apriori/train_model_apriori.py",
     )
 
-    publish_recommendation = BashOperator(
-        task_id="publish_recommendation",
-        bash_command="python /opt/airflow/src/pythonScripts/model_apriori/apriori_mlflow_predict.py",
-    )
-
-    # -----------------------------------------------------------------------
-    # Branch B: Customer Value Scoring (Churn)
-    # -----------------------------------------------------------------------
-    feature_churn = BashOperator(
-        task_id="feature_churn",
-        bash_command="python /opt/airflow/src/pythonScripts/model_churn/feature_churn.py",
-    )
-
-    train_churn = BashOperator(
-        task_id="train_churn",
-        bash_command="python /opt/airflow/src/pythonScripts/model_churn/train_churn_model.py",
-    )
-
-    # -----------------------------------------------------------------------
-    # Dependencies — both branches run in parallel after features are ready
-    # -----------------------------------------------------------------------
-    feature_task >> train_apriori >> publish_recommendation
-    feature_churn >> train_churn
+    feature_task >> train_apriori
+    spark_etl >> dvc_push
+    spark_etl >> feature_task
 

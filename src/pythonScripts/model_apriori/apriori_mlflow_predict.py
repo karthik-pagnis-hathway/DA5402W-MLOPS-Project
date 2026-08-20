@@ -141,10 +141,10 @@ def serve_model(model_uri: str, host: str = "127.0.0.1", port: int = 5001) -> No
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Log and serve an Apriori MLflow prediction model")
+    parser = argparse.ArgumentParser(description="Log an Apriori MLflow prediction model. Use --serve only for local testing, not in the DAG.")
     parser.add_argument("--model-path", type=str, default=None, help="Path to apriori_model.pkl")
-    parser.add_argument("--tracking-uri", type=str, default="http://127.0.0.1:5000", help="MLflow tracking server URI")
-    parser.add_argument("--serve", action="store_true", help="Serve the model after logging it")
+    parser.add_argument("--tracking-uri", type=str, default="http://mlflow:5000", help="MLflow tracking server URI")
+    parser.add_argument("--serve", action="store_true", help="Serve the model after logging it (local testing only)")
     parser.add_argument("--port", type=int, default=5001, help="Port for the MLflow model server")
     args = parser.parse_args()
 

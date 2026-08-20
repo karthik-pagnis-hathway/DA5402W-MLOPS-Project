@@ -201,22 +201,50 @@ def generate_events_chunk(chunk_size: int, start_id: int, n_users: int, n_produc
 
 def generate_events_to_csv(path: str, n_events: int, n_users: int, n_products: int, 
                             chunk_size: int, rng: np.random.Generator, stream: bool, broker: str) -> None:
-    n_written = 0
-    first_chunk = True
-    t_start = time.time()
+    def write_chunk_csv(df: pd.DataFrame, target_path: str, header: bool) -> None:
+        df.to_csv(target_path, mode="w" if header else "a", header=header, index=False)
+
+        base_name = os.path.basename(target_path)
+        if base_name != "events.csv":
+            compat_path = os.path.join(os.path.dirname(target_path), "events.csv")
+            if os.path.abspath(target_path) != os.path.abspath(compat_path):
+                df.to_csv(compat_path, mode="w" if header else "a", header=header, index=False)
 
     kafka_producer = None
     if stream:
         try:
             from kafka import KafkaProducer
+            from kafka.errors import NoBrokersAvailable
             import json
-            kafka_producer = KafkaProducer(
-                bootstrap_servers=broker,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8')
-            )
-            print(f" Connected to Kafka broker at: {broker}")
+
+            deadline = time.time() + 60
+            last_error = None
+            while time.time() < deadline:
+                try:
+                    kafka_producer = KafkaProducer(
+                        bootstrap_servers=broker,
+                        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                        api_version_auto_timeout_ms=30000,
+                        request_timeout_ms=30000,
+                    )
+                    if kafka_producer.bootstrap_connected():
+                        print(f" Connected to Kafka broker at: {broker}")
+                        break
+                    kafka_producer.close()
+                except (NoBrokersAvailable, OSError, ConnectionError) as exc:
+                    last_error = exc
+                    print(f"[producer] Kafka broker not ready at {broker}, retrying in 3s...")
+                    time.sleep(3)
+                else:
+                    break
+            else:
+                raise RuntimeError(f"Kafka broker at {broker} did not become ready in time: {last_error}")
         except ImportError:
             print("\n[WARNING] 'kafka-python' not found. Falling back to Log-Dry-Run mode.")
+
+    n_written = 0
+    first_chunk = True
+    t_start = time.time()
 
     while n_written < n_events:
         this_chunk = min(chunk_size, n_events - n_written)
@@ -234,8 +262,9 @@ def generate_events_to_csv(path: str, n_events: int, n_users: int, n_products: i
                 print("--------------------------------------------------------\n")
         
         # Always output to CSV as a persistent file store backing
-        df.to_csv(path, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-        
+        print(f"Writing {this_chunk:,} records to {path}...")
+        write_chunk_csv(df, path, first_chunk)
+
         n_written += this_chunk
         first_chunk = False
         elapsed = time.time() - t_start
